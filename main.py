@@ -113,8 +113,3 @@ def handle_message(event):
                 messages=[TextMessage(text=reply_text)]
             )
         )
-            ReplyMessageRequest(
-                reply_token=event.reply_token,
-                messages=[TextMessage(text=reply_text)]
-            )
-        )
