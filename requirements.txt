@@ -2,3 +2,5 @@ fastapi
 uvicorn
 line-bot-sdk
 supabase
+pandas
+openpyxl
