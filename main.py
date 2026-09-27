@@ -74,7 +74,7 @@ def handle_message(event):
             # สร้างข้อความสรุปแยกหมวดหมู่
             cat_summary_text = ""
             if category_totals:
-                cat_summary_text = "\n\n📁 **ยอดรายจ่ายแยกตามหมวดหมู่:**\n"
+                cat_summary_text = "\n\n📌 **ยอดรายจ่ายแยกตามหมวดหมู่:**\n"
                 for cat, amt in category_totals.items():
                     cat_summary_text += f"• {cat}: {amt:,.2f} บาท\n"
 
