@@ -18,11 +18,11 @@ from supabase import create_client, Client
 
 app = FastAPI()
 
-# Keys
-LINE_CHANNEL_ACCESS_TOKEN = "EOJmyUuFqtRB4XXcmr3n1uClgWVyQEgMDZxhr73mvds0s5M/gaRKjHeY73nO2dq8ZsC7po/RTXfutG8B1R21ziC+ZHndfItC999MTmSqzWo1qBMf5rRll6nYFr6MCUddwDTQCBhvhEfeAA/nvo4T+gdB04t89/1O/w1cDnyilFU="
-LINE_CHANNEL_SECRET = "8bb577ddf6791e5981675e12a41be05c"
-SUPABASE_URL = "https://hprdhjjqskkvmzfdxiyw.supabase.co"
-SUPABASE_KEY = "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6ImhwcmRoampxc2trdm16ZmR4aXl3Iiwicm9sZSI6ImFub24iLCJpYXQiOjE3ODk2OTc5OTQsImV4cCI6MjEwNTI3Mzk5NH0.eQ4c1-WsunjwIl9DslPher5YJlIMe2dt791Dhcc5_0M"
+# โหลด Keys จาก Environment Variables
+LINE_CHANNEL_ACCESS_TOKEN = os.getenv("LINE_CHANNEL_ACCESS_TOKEN")
+LINE_CHANNEL_SECRET = os.getenv("LINE_CHANNEL_SECRET")
+SUPABASE_URL = os.getenv("SUPABASE_URL")
+SUPABASE_KEY = os.getenv("SUPABASE_KEY")
 
 configuration = Configuration(access_token=LINE_CHANNEL_ACCESS_TOKEN)
 handler = WebhookHandler(LINE_CHANNEL_SECRET)
@@ -84,7 +84,42 @@ def handle_message(event):
             }).execute()
             reply_text = f"เพิ่มหมวดหมู่ '{new_cat}' เรียบร้อยแล้วครับ! ✨"
 
-    # 3. กรณีผู้ใช้กดเลือกหมวดหมู่รายการที่รอดำเนินการอยู่
+    # 3. เพิ่มใหม่: คำสั่งลบรายการล่าสุด (รองรับคำว่า "ลบรายการล่าสุด", "ลบ", "ยกเลิก")
+    elif user_text in ["ลบรายการล่าสุด", "ลบ", "ยกเลิก"]:
+        # ดึงรายการล่าสุดของผู้ใช้โดยเรียงตามเวลาที่บันทึก (created_at)
+        res = supabase.table("transactions") \
+            .select("*") \
+            .eq("line_user_id", user_id) \
+            .order("created_at", desc=True) \
+            .limit(1) \
+            .execute()
+
+        if res.data:
+            latest_item = res.data[0]
+            item_id = latest_item["id"]
+            item_name = latest_item["item"]
+            amount = latest_item["amount"]
+
+            # ลบรายการล่าสุดนั้นออกจาก Supabase
+            supabase.table("transactions").delete().eq("id", item_id).execute()
+
+            # คำนวณยอดคงเหลือใหม่หลังลบ
+            rem_res = supabase.table("transactions").select("*").eq("line_user_id", user_id).execute()
+            records = rem_res.data
+            total_income = sum(r['amount'] for r in records if r.get('type') == 'income')
+            total_expense = sum(r['amount'] for r in records if r.get('type') == 'expense')
+            balance = total_income - total_expense
+
+            reply_text = (
+                f"🗑️ ลบรายการล่าสุดเรียบร้อยแล้ว!\n"
+                f"รายการที่ลบ: {item_name} ({amount:,.2f} บาท)\n"
+                f"➖➖➖➖➖➖➖➖➖\n"
+                f"💰 ยอดคงเหลือปัจจุบัน: {balance:,.2f} บาท"
+            )
+        else:
+            reply_text = "ยังไม่มีรายการบันทึกให้ลบครับ"
+
+    # 4. กรณีผู้ใช้กดเลือกหมวดหมู่รายการที่รอดำเนินการอยู่
     elif user_id in pending_transactions:
         selected_cat = user_text.replace("📁 ", "").strip()
 
@@ -119,7 +154,7 @@ def handle_message(event):
             f"💰 ยอดคงเหลือล่าสุด: {balance:,.2f} บาท"
         )
 
-    # 4. กรณีบันทึกรายการใหม่ (เช่น: ค่าทำผม 500)
+    # 5. กรณีบันทึกรายการใหม่ (เช่น: ค่าทำผม 500)
     else:
         match = re.match(r"^(.+)\s+(\d+(\.\d+)?)$", user_text)
         if match:
@@ -154,8 +189,10 @@ def handle_message(event):
             reply_text = (
                 "โปรดพิมพ์ในรูปแบบ: [รายการ] [จำนวนเงิน]\n"
                 "เช่น: ค่าอาหาร 120\n\n"
-                "หรือพิมพ์เพิ่มหมวดหมู่ใหม่ เช่น:\nเพิ่มหมวดหมู่ เสริมสวย"
+                "หรือพิมพ์เพิ่มหมวดหมู่ใหม่ เช่น:\nเพิ่มหมวดหมู่ เสริมสวย\n\n"
+                "หากบันทึกผิด พิมพ์คำว่า 'ลบ' หรือ 'ลบรายการล่าสุด' ได้ครับ"
             )
+
 
     # ส่งข้อความตอบกลับไปยัง LINE
     with ApiClient(configuration) as api_client:
