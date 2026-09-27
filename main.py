@@ -23,9 +23,12 @@ from supabase import create_client, Client
 
 app = FastAPI()
 
-# สร้างและแมพโฟลเดอร์สำหรับเก็บไฟล์ Excel ชั่วคราว
+# เพิ่มการตั้งค่าโฟลเดอร์สำหรับดาวน์โหลดตรงนี้
 os.makedirs("downloads", exist_ok=True)
 app.mount("/downloads", StaticFiles(directory="downloads"), name="downloads")
+
+# กำหนด BASE_URL ตรงๆ
+BASE_URL = "https://srv-dankhjrtqb8s73c7n40g.onrender.com"
 
 # Keys
 LINE_CHANNEL_ACCESS_TOKEN = "EOJmyUuFqtRB4XXcmr3n1uClgWVyQEgMDZxhr73mvds0s5M/gaRKjHeY73nO2dq8ZsC7po/RTXfutG8B1R21ziC+ZHndfItC999MTmSqzWo1qBMf5rRll6nYFr6MCUddwDTQCBhvhEfeAA/nvo4T+gdB04t89/1O/w1cDnyilFU="
