@@ -97,70 +97,78 @@ def handle_message(event):
 
     # 2. เพิ่มใหม่: คำสั่งส่งไฟล์ Excel (พิมพ์ "ดึงไฟล์", "ขอไฟล์", "excel")
     elif user_text in ["ดึงไฟล์", "ขอไฟล์", "excel", "ส่งไฟล์"]:
-        response = supabase.table("transactions").select("*").eq("line_user_id", user_id).order("created_at", desc=False).execute()
-        records = response.data
+        try:
+            response = supabase.table("transactions").select("*").eq("line_user_id", user_id).order("created_at",
+                                                                                                    desc=False).execute()
+            records = response.data
 
-        if not records:
-            reply_text = "ยังไม่มีข้อมูลรายรับ-รายจ่ายสำหรับส่งออกเป็นไฟล์ Excel ครับ"
-        else:
-            # แปลงข้อมูลเป็น DataFrame
-            data_list = []
-            for idx, r in enumerate(records, 1):
-                created_dt = r.get("created_at", "")
-                if created_dt:
-                    dt_obj = datetime.fromisoformat(created_dt.replace("Z", "+00:00"))
-                    date_str = dt_obj.strftime("%d/%m/%Y %H:%M")
-                else:
-                    date_str = "-"
+            if not records:
+                reply_text = "ยังไม่มีข้อมูลรายรับ-รายจ่ายสำหรับส่งออกเป็นไฟล์ Excel ครับ"
+            else:
+                # แปลงข้อมูลเป็น DataFrame
+                data_list = []
+                for idx, r in enumerate(records, 1):
+                    created_dt = r.get("created_at", "")
+                    if created_dt:
+                        dt_obj = datetime.fromisoformat(created_dt.replace("Z", "+00:00"))
+                        date_str = dt_obj.strftime("%d/%m/%Y %H:%M")
+                    else:
+                        date_str = "-"
 
-                data_list.append({
-                    "ลำดับ": idx,
-                    "วัน-เวลา": date_str,
-                    "รายการ": r.get("item", ""),
-                    "ประเภท": "รายรับ" if r.get("type") == "income" else "รายจ่าย",
-                    "จำนวนเงิน (บาท)": r.get("amount", 0.0),
-                    "หมวดหมู่": r.get("category", "ไม่ระบุ")
-                })
+                    data_list.append({
+                        "ลำดับ": idx,
+                        "วัน-เวลา": date_str,
+                        "รายการ": r.get("item", ""),
+                        "ประเภท": "รายรับ" if r.get("type") == "income" else "รายจ่าย",
+                        "จำนวนเงิน (บาท)": r.get("amount", 0.0),
+                        "หมวดหมู่": r.get("category", "ไม่ระบุ")
+                    })
 
-            df = pd.DataFrame(data_list)
+                df = pd.DataFrame(data_list)
 
-            # บันทึกเป็นไฟล์ .xlsx
-            filename = f"report_{user_id}_{int(datetime.now().timestamp())}.xlsx"
-            filepath = os.path.join("downloads", filename)
-            df.to_excel(filepath, index=False, engine='openpyxl')
+                # บันทึกเป็นไฟล์ .xlsx
+                filename = f"report_{user_id}_{int(datetime.now().timestamp())}.xlsx"
+                filepath = os.path.join("downloads", filename)
+                df.to_excel(filepath, index=False, engine='openpyxl')
 
-            # ลิงก์ดาวน์โหลด
-            download_url = f"{BASE_URL}/downloads/{filename}"
+                # ลิงก์ดาวน์โหลด (แก้ไข URL ให้ถูกต้องเรียบร้อยแล้ว)
+                download_url = f"https://srv-dankhjrtqb8s73c7n40g.onrender.com/downloads/{filename}"
 
-            # สร้างปุ่ม Flex Message ให้คุณแม่กดดาวน์โหลดได้ง่ายๆ
-            flex_json = {
-                "type": "bubble",
-                "body": {
-                    "type": "box",
-                    "layout": "vertical",
-                    "contents": [
-                        {"type": "text", "text": "📊 รายงานไฟล์ Excel", "weight": "bold", "size": "lg", "color": "#1DB446"},
-                        {"type": "text", "text": "รวบรวมข้อมูลรายรับ-รายจ่ายทั้งหมดเรียบร้อยครับ", "size": "sm", "color": "#666666", "wrap": True, "margin": "md"}
-                    ]
-                },
-                "footer": {
-                    "type": "box",
-                    "layout": "vertical",
-                    "contents": [
-                        {
-                            "type": "button",
-                            "style": "primary",
-                            "color": "#1DB446",
-                            "action": {
-                                "type": "uri",
-                                "label": "🟢 ดาวน์โหลดไฟล์ Excel",
-                                "uri": download_url
+                # สร้างปุ่ม Flex Message ให้คุณแม่กดดาวน์โหลด
+                flex_json = {
+                    "type": "bubble",
+                    "body": {
+                        "type": "box",
+                        "layout": "vertical",
+                        "contents": [
+                            {"type": "text", "text": "📊 รายงานไฟล์ Excel", "weight": "bold", "size": "lg",
+                             "color": "#1DB446"},
+                            {"type": "text", "text": "รวบรวมข้อมูลรายรับ-รายจ่ายทั้งหมดเรียบร้อยครับ", "size": "sm",
+                             "color": "#666666", "wrap": True, "margin": "md"}
+                        ]
+                    },
+                    "footer": {
+                        "type": "box",
+                        "layout": "vertical",
+                        "contents": [
+                            {
+                                "type": "button",
+                                "style": "primary",
+                                "color": "#1DB446",
+                                "action": {
+                                    "type": "uri",
+                                    "label": "🟢 ดาวน์โหลดไฟล์ Excel",
+                                    "uri": download_url
+                                }
                             }
-                        }
-                    ]
+                        ]
+                    }
                 }
-            }
-            reply_message_obj = FlexMessage(alt_text="ดาวน์โหลดไฟล์ Excel", contents=FlexContainer.from_dict(flex_json))
+                reply_message_obj = FlexMessage(alt_text="ดาวน์โหลดไฟล์ Excel",
+                                                contents=FlexContainer.from_dict(flex_json))
+        except Exception as e:
+            print("Error generating excel:", e)
+            reply_text = f"เกิดข้อผิดพลาดในการสร้างไฟล์ Excel: {e}"
 
     # 3. คำสั่งเพิ่มหมวดหมู่ใหม่
     elif user_text.startswith("เพิ่มหมวดหมู่"):
