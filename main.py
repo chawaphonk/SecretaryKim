@@ -3,7 +3,7 @@ import re
 import pandas as pd
 from datetime import datetime
 from fastapi import FastAPI, Request, HTTPException
-from fastapi.staticfiles import StaticFiles
+from fastapi.responses import FileResponse
 from linebot.v3 import WebhookHandler
 from linebot.v3.exceptions import InvalidSignatureError
 from linebot.v3.messaging import (
@@ -21,18 +21,15 @@ from linebot.v3.messaging import (
 from linebot.v3.webhooks import MessageEvent, TextMessageContent
 from supabase import create_client, Client
 
-# กำหนด docs_url และ redoc_url ให้ชัดเจน
 app = FastAPI(
     title="SecretaryKim API",
     docs_url="/docs",
     redoc_url="/redoc"
 )
 
-# สร้างโฟลเดอร์ absolute path ป้องกันโฟลเดอร์หลงทิศ
-DOWNLOAD_DIR = os.path.join(os.path.dirname(__file__), "downloads")
+# ใช้โฟลเดอร์ /tmp สำหรับบันทึกไฟล์ชั่วคราวบน Linux (Render)
+DOWNLOAD_DIR = "/tmp/downloads"
 os.makedirs(DOWNLOAD_DIR, exist_ok=True)
-
-app.mount("/downloads", StaticFiles(directory=DOWNLOAD_DIR), name="downloads")
 
 BASE_URL = "https://srv-dankhjrtqb8s73c7n40g.onrender.com"
 
@@ -46,17 +43,26 @@ configuration = Configuration(access_token=LINE_CHANNEL_ACCESS_TOKEN)
 handler = WebhookHandler(LINE_CHANNEL_SECRET)
 supabase: Client = create_client(SUPABASE_URL, SUPABASE_KEY)
 
-# หน่วยความจำชั่วคราวสำหรับพักรายการรอเลือกหมวดหมู่
 pending_transactions = {}
-
-# หมวดหมู่เริ่มต้นระบบ
 DEFAULT_CATEGORIES = ["อาหาร", "เดินทาง", "บ้าน/ครอบครัว", "ช้อปปิ้ง", "ค่าน้ำค่าน้ำไฟ", "อื่นๆ"]
 
 
-# 0. Route หน้าแรกทดสอบการทำงานของ Web Server
 @app.get("/")
 async def root():
     return {"status": "ok", "message": "SecretaryKim Web Service is running!"}
+
+
+# Route สำหรับโหลดไฟล์โดยตรงผ่าน FileResponse
+@app.get("/download-excel/{filename}")
+async def download_excel(filename: str):
+    filepath = os.path.join(DOWNLOAD_DIR, filename)
+    if os.path.exists(filepath):
+        return FileResponse(
+            path=filepath,
+            filename=filename,
+            media_type="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
+        )
+    raise HTTPException(status_code=404, detail="File Not Found")
 
 
 @app.post("/webhook")
@@ -78,7 +84,6 @@ def handle_message(event):
     reply_message_obj = None
     reply_text = ""
 
-    # 1. คำสั่ง 'สรุป' เพื่อดูรายงานภาพรวม
     if user_text == "สรุป":
         response = supabase.table("transactions").select("*").eq("line_user_id", user_id).execute()
         records = response.data
@@ -111,7 +116,6 @@ def handle_message(event):
                 f"{cat_summary_text}"
             )
 
-    # 2. คำสั่งส่งไฟล์ Excel
     elif user_text in ["ดึงไฟล์", "ขอไฟล์", "excel", "ส่งไฟล์"]:
         try:
             response = supabase.table("transactions").select("*").eq("line_user_id", user_id).order("created_at", desc=False).execute()
@@ -140,11 +144,11 @@ def handle_message(event):
 
                 df = pd.DataFrame(data_list)
 
-                filename = f"report_{user_id}_{int(datetime.now().timestamp())}.xlsx"
+                filename = f"report_{user_id}.xlsx"
                 filepath = os.path.join(DOWNLOAD_DIR, filename)
                 df.to_excel(filepath, index=False, engine='openpyxl')
 
-                download_url = f"{BASE_URL}/downloads/{filename}"
+                download_url = f"{BASE_URL}/download-excel/{filename}"
 
                 flex_json = {
                     "type": "bubble",
@@ -178,7 +182,6 @@ def handle_message(event):
             print("Error generating excel:", e)
             reply_text = f"เกิดข้อผิดพลาดในการสร้างไฟล์ Excel: {e}"
 
-    # 3. คำสั่งเพิ่มหมวดหมู่ใหม่
     elif user_text.startswith("เพิ่มหมวดหมู่"):
         new_cat = user_text.replace("เพิ่มหมวดหมู่", "").strip()
         if not new_cat:
@@ -190,7 +193,6 @@ def handle_message(event):
             }).execute()
             reply_text = f"เพิ่มหมวดหมู่ '{new_cat}' เรียบร้อยแล้วครับ! ✨"
 
-    # 4. คำสั่งลบรายการล่าสุด
     elif user_text in ["ลบรายการล่าสุด", "ลบ", "ยกเลิก"]:
         res = supabase.table("transactions") \
             .select("*") \
@@ -222,7 +224,6 @@ def handle_message(event):
         else:
             reply_text = "ยังไม่มีรายการบันทึกให้ลบครับ"
 
-    # 5. กรณีเลือกหมวดหมู่รายการที่รอดำเนินการอยู่
     elif user_id in pending_transactions:
         selected_cat = user_text.replace("📁 ", "").strip()
 
@@ -254,7 +255,6 @@ def handle_message(event):
             f"💰 ยอดคงเหลือล่าสุด: {balance:,.2f} บาท"
         )
 
-    # 6. กรณีบันทึกรายการใหม่
     else:
         match = re.match(r"^(.+)\s+(\d+(\.\d+)?)$", user_text)
         if match:
@@ -290,7 +290,6 @@ def handle_message(event):
                 "หรือพิมพ์ 'สรุป', 'เพิ่มหมวดหมู่', 'ลบ' ได้ครับ"
             )
 
-    # เตรียมการส่งข้อความตอบกลับ
     if not reply_message_obj:
         reply_message_obj = TextMessage(text=reply_text, quick_reply=quick_reply_obj)
 
