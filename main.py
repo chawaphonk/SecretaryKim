@@ -206,3 +206,5 @@ def handle_message(event):
                         quick_reply=quick_reply_obj
                     )
                 ]
+            )
+        )
