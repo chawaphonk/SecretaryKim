@@ -21,7 +21,12 @@ from linebot.v3.messaging import (
 from linebot.v3.webhooks import MessageEvent, TextMessageContent
 from supabase import create_client, Client
 
-app = FastAPI()
+# กำหนด docs_url และ redoc_url ให้ชัดเจน
+app = FastAPI(
+    title="SecretaryKim API",
+    docs_url="/docs",
+    redoc_url="/redoc"
+)
 
 # สร้างโฟลเดอร์ absolute path ป้องกันโฟลเดอร์หลงทิศ
 DOWNLOAD_DIR = os.path.join(os.path.dirname(__file__), "downloads")
@@ -29,7 +34,7 @@ os.makedirs(DOWNLOAD_DIR, exist_ok=True)
 
 app.mount("/downloads", StaticFiles(directory=DOWNLOAD_DIR), name="downloads")
 
-BASE_URL = "https://srv-dankhjrtqb8s73c7n40g.onrender.com"
+BASE_URL = "https://srv-dankhjrtqb8s73c7n40g.onrender.co
 
 # Keys
 LINE_CHANNEL_ACCESS_TOKEN = "EOJmyUuFqtRB4XXcmr3n1uClgWVyQEgMDZxhr73mvds0s5M/gaRKjHeY73nO2dq8ZsC7po/RTXfutG8B1R21ziC+ZHndfItC999MTmSqzWo1qBMf5rRll6nYFr6MCUddwDTQCBhvhEfeAA/nvo4T+gdB04t89/1O/w1cDnyilFU="
@@ -48,6 +53,12 @@ pending_transactions = {}
 DEFAULT_CATEGORIES = ["อาหาร", "เดินทาง", "บ้าน/ครอบครัว", "ช้อปปิ้ง", "ค่าน้ำค่าน้ำไฟ", "อื่นๆ"]
 
 
+# 0. Route หน้าแรกทดสอบการทำงานของ Web Server
+@app.get("/")
+async def root():
+    return {"status": "ok", "message": "SecretaryKim Web Service is running!"}
+
+
 @app.post("/webhook")
 async def webhook(request: Request):
     signature = request.headers.get("X-Line-Signature", "")
@@ -64,7 +75,7 @@ def handle_message(event):
     user_text = event.message.text.strip()
     user_id = event.source.user_id
     quick_reply_obj = None
-    reply_message_obj = None  # ใช้รองรับข้อความประเภทอื่นนอกจาก TextMessage
+    reply_message_obj = None
     reply_text = ""
 
     # 1. คำสั่ง 'สรุป' เพื่อดูรายงานภาพรวม
@@ -100,7 +111,7 @@ def handle_message(event):
                 f"{cat_summary_text}"
             )
 
-    # 2. คำสั่งส่งไฟล์ Excel (พิมพ์ "ดึงไฟล์", "ขอไฟล์", "excel", "ส่งไฟล์")
+    # 2. คำสั่งส่งไฟล์ Excel
     elif user_text in ["ดึงไฟล์", "ขอไฟล์", "excel", "ส่งไฟล์"]:
         try:
             response = supabase.table("transactions").select("*").eq("line_user_id", user_id).order("created_at", desc=False).execute()
@@ -129,12 +140,10 @@ def handle_message(event):
 
                 df = pd.DataFrame(data_list)
 
-                # สร้างชื่อไฟล์ และเซฟลง DOWNLOAD_DIR
                 filename = f"report_{user_id}_{int(datetime.now().timestamp())}.xlsx"
                 filepath = os.path.join(DOWNLOAD_DIR, filename)
                 df.to_excel(filepath, index=False, engine='openpyxl')
 
-                # ลิงก์ดาวน์โหลด
                 download_url = f"{BASE_URL}/downloads/{filename}"
 
                 flex_json = {
