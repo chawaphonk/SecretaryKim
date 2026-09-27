@@ -8,7 +8,10 @@ from linebot.v3.messaging import (
     ApiClient,
     MessagingApi,
     ReplyMessageRequest,
-    TextMessage
+    TextMessage,
+    QuickReply,
+    QuickReplyItem,
+    MessageAction
 )
 from linebot.v3.webhooks import MessageEvent, TextMessageContent
 from supabase import create_client, Client
@@ -25,9 +28,11 @@ configuration = Configuration(access_token=LINE_CHANNEL_ACCESS_TOKEN)
 handler = WebhookHandler(LINE_CHANNEL_SECRET)
 supabase: Client = create_client(SUPABASE_URL, SUPABASE_KEY)
 
-configuration = Configuration(access_token=LINE_CHANNEL_ACCESS_TOKEN)
-handler = WebhookHandler(LINE_CHANNEL_SECRET)
-supabase: Client = create_client(SUPABASE_URL, SUPABASE_KEY)
+# หน่วยความจำชั่วคราวสำหรับพักรายการรอเลือกหมวดหมู่
+pending_transactions = {}
+
+# หมวดหมู่เริ่มต้นระบบ
+DEFAULT_CATEGORIES = ["อาหาร", "เดินทาง", "บ้าน/ครอบครัว", "ช้อปปิ้ง", "ค่าน้ำค่าน้ำไฟ", "อื่นๆ"]
 
 
 @app.post("/webhook")
@@ -45,8 +50,9 @@ async def webhook(request: Request):
 def handle_message(event):
     user_text = event.message.text.strip()
     user_id = event.source.user_id
+    quick_reply_obj = None
 
-    # 1. กรณีผู้ใช้พิมพ์คำว่า "สรุป" เพื่อดูรายงานแบบละเอียด
+    # 1. คำสั่ง 'สรุป' เพื่อดูรายงานภาพรวม
     if user_text == "สรุป":
         response = supabase.table("transactions").select("*").eq("line_user_id", user_id).execute()
         records = response.data
@@ -54,8 +60,8 @@ def handle_message(event):
         if not records:
             reply_text = "ยังไม่มีข้อมูลรายรับ-รายจ่ายบันทึกไว้ครับ"
         else:
-            total_income = sum(r['amount'] for r in records if r['type'] == 'income')
-            total_expense = sum(r['amount'] for r in records if r['type'] == 'expense')
+            total_income = sum(r['amount'] for r in records if r.get('type') == 'income')
+            total_expense = sum(r['amount'] for r in records if r.get('type') == 'expense')
             balance = total_income - total_expense
 
             reply_text = (
@@ -66,43 +72,90 @@ def handle_message(event):
                 f"💰 ยอดคงเหลือ: {balance:,.2f} บาท"
             )
 
-    # 2. กรณีบันทึกรายการรายรับ-รายจ่าย
+    # 2. คำสั่งเพิ่มหมวดหมู่ใหม่ (เช่น: เพิ่มหมวดหมู่ เสริมสวย)
+    elif user_text.startswith("เพิ่มหมวดหมู่"):
+        new_cat = user_text.replace("เพิ่มหมวดหมู่", "").strip()
+        if not new_cat:
+            reply_text = "โปรดระบุชื่อหมวดหมู่ด้วยครับ เช่น:\nเพิ่มหมวดหมู่ เสริมสวย"
+        else:
+            supabase.table("categories").insert({
+                "line_user_id": user_id,
+                "name": new_cat
+            }).execute()
+            reply_text = f"เพิ่มหมวดหมู่ '{new_cat}' เรียบร้อยแล้วครับ! ✨"
+
+    # 3. กรณีผู้ใช้กดเลือกหมวดหมู่รายการที่รอดำเนินการอยู่
+    elif user_id in pending_transactions:
+        selected_cat = user_text.replace("📁 ", "").strip()
+
+        # ดึงข้อมูลรายการที่พักไว้
+        data = pending_transactions.pop(user_id)
+        item_name = data["item"]
+        amount = data["amount"]
+        trans_type = data["type"]
+
+        # บันทึกลง Supabase พร้อมหมวดหมู่
+        supabase.table("transactions").insert({
+            "line_user_id": user_id,
+            "item": item_name,
+            "amount": amount,
+            "type": trans_type,
+            "category": selected_cat
+        }).execute()
+
+        # คำนวณยอดคงเหลือล่าสุด
+        response = supabase.table("transactions").select("*").eq("line_user_id", user_id).execute()
+        records = response.data
+        total_income = sum(r['amount'] for r in records if r.get('type') == 'income')
+        total_expense = sum(r['amount'] for r in records if r.get('type') == 'expense')
+        balance = total_income - total_expense
+
+        type_label = "รายรับ 📈" if trans_type == "income" else "รายจ่าย 📉"
+        reply_text = (
+            f"บันทึกสำเร็จ! ✅\n"
+            f"{type_label}: {item_name} ({amount:,.2f} บาท)\n"
+            f"📁 หมวดหมู่: {selected_cat}\n"
+            f"➖➖➖➖➖➖➖➖➖\n"
+            f"💰 ยอดคงเหลือล่าสุด: {balance:,.2f} บาท"
+        )
+
+    # 4. กรณีบันทึกรายการใหม่ (เช่น: ค่าทำผม 500)
     else:
         match = re.match(r"^(.+)\s+(\d+(\.\d+)?)$", user_text)
         if match:
             item_name = match.group(1).strip()
             amount = float(match.group(2))
-
-            # แยกประเภท รายรับ / รายจ่าย
             trans_type = "income" if any(kw in item_name for kw in ["เงินเดือน", "ขาย", "ได้"]) else "expense"
 
-            data = {
-                "line_user_id": user_id,
+            # พักข้อมูลรายการไว้
+            pending_transactions[user_id] = {
                 "item": item_name,
                 "amount": amount,
                 "type": trans_type
             }
 
-            # บันทึกลง Supabase
-            supabase.table("transactions").insert(data).execute()
+            # ดึงหมวดหมู่ของผู้ใช้จาก Supabase
+            cats_res = supabase.table("categories").select("name").eq("line_user_id", user_id).execute()
+            custom_cats = [r["name"] for r in cats_res.data]
+            all_categories = list(set(DEFAULT_CATEGORIES + custom_cats))
 
-            # --- ดึงข้อมูลทั้งหมดมาคำนวณยอดรวมล่าสุดทันที ---
-            response = supabase.table("transactions").select("*").eq("line_user_id", user_id).execute()
-            records = response.data
+            # สร้างปุ่ม Quick Reply ในรูปแบบ SDK v3
+            items = [
+                QuickReplyItem(
+                    action=MessageAction(label=f"📁 {cat[:15]}", text=cat)
+                )
+                for cat in all_categories[:13]  # LINE รองรับสูงสุด 13 ปุ่ม
+            ]
+            quick_reply_obj = QuickReply(items=items)
 
-            total_income = sum(r['amount'] for r in records if r['type'] == 'income')
-            total_expense = sum(r['amount'] for r in records if r['type'] == 'expense')
-            balance = total_income - total_expense
-
-            type_label = "รายรับ 📈" if trans_type == "income" else "รายจ่าย 📉"
-            reply_text = (
-                f"บันทึกสำเร็จ! ✅\n"
-                f"{type_label}: {item_name} ({amount:,.2f} บาท)\n"
-                f"➖➖➖➖➖➖➖➖➖\n"
-                f"💰 ยอดคงเหลือล่าสุด: {balance:,.2f} บาท"
-            )
+            type_label = "รายรับ" if trans_type == "income" else "รายจ่าย"
+            reply_text = f"📌 เลือกหมวดหมู่สำหรับ [{type_label}] '{item_name}' ({amount:,.2f} บาท):"
         else:
-            reply_text = "โปรดพิมพ์ในรูปแบบ: [รายการ] [จำนวนเงิน]\nเช่น: ค่าอาหาร 120\nหรือพิมพ์ 'สรุป' เพื่อดูรายงานยอดรวม"
+            reply_text = (
+                "โปรดพิมพ์ในรูปแบบ: [รายการ] [จำนวนเงิน]\n"
+                "เช่น: ค่าอาหาร 120\n\n"
+                "หรือพิมพ์เพิ่มหมวดหมู่ใหม่ เช่น:\nเพิ่มหมวดหมู่ เสริมสวย"
+            )
 
     # ส่งข้อความตอบกลับไปยัง LINE
     with ApiClient(configuration) as api_client:
@@ -110,6 +163,11 @@ def handle_message(event):
         line_bot_api.reply_message(
             ReplyMessageRequest(
                 reply_token=event.reply_token,
-                messages=[TextMessage(text=reply_text)]
+                messages=[
+                    TextMessage(
+                        text=reply_text,
+                        quick_reply=quick_reply_obj
+                    )
+                ]
             )
         )
