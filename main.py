@@ -65,6 +65,7 @@ def handle_message(event):
     user_id = event.source.user_id
     quick_reply_obj = None
     reply_message_obj = None  # ใช้รองรับข้อความประเภทอื่นนอกจาก TextMessage
+    reply_text = ""
 
     # 1. คำสั่ง 'สรุป' เพื่อดูรายงานภาพรวม
     if user_text == "สรุป":
@@ -99,11 +100,10 @@ def handle_message(event):
                 f"{cat_summary_text}"
             )
 
-        # 2. คำสั่งส่งไฟล์ Excel
-        elif user_text in ["ดึงไฟล์", "ขอไฟล์", "excel", "ส่งไฟล์"]:
+    # 2. คำสั่งส่งไฟล์ Excel (พิมพ์ "ดึงไฟล์", "ขอไฟล์", "excel", "ส่งไฟล์")
+    elif user_text in ["ดึงไฟล์", "ขอไฟล์", "excel", "ส่งไฟล์"]:
         try:
-            response = supabase.table("transactions").select("*").eq("line_user_id", user_id).order("created_at",
-                                                                                                    desc=False).execute()
+            response = supabase.table("transactions").select("*").eq("line_user_id", user_id).order("created_at", desc=False).execute()
             records = response.data
 
             if not records:
@@ -143,10 +143,8 @@ def handle_message(event):
                         "type": "box",
                         "layout": "vertical",
                         "contents": [
-                            {"type": "text", "text": "📊 รายงานไฟล์ Excel", "weight": "bold", "size": "lg",
-                             "color": "#1DB446"},
-                            {"type": "text", "text": "รวบรวมข้อมูลรายรับ-รายจ่ายทั้งหมดเรียบร้อยครับ", "size": "sm",
-                             "color": "#666666", "wrap": True, "margin": "md"}
+                            {"type": "text", "text": "📊 รายงานไฟล์ Excel", "weight": "bold", "size": "lg", "color": "#1DB446"},
+                            {"type": "text", "text": "รวบรวมข้อมูลรายรับ-รายจ่ายทั้งหมดเรียบร้อยครับ", "size": "sm", "color": "#666666", "wrap": True, "margin": "md"}
                         ]
                     },
                     "footer": {
@@ -166,8 +164,7 @@ def handle_message(event):
                         ]
                     }
                 }
-                reply_message_obj = FlexMessage(alt_text="ดาวน์โหลดไฟล์ Excel",
-                                                contents=FlexContainer.from_dict(flex_json))
+                reply_message_obj = FlexMessage(alt_text="ดาวน์โหลดไฟล์ Excel", contents=FlexContainer.from_dict(flex_json))
         except Exception as e:
             print("Error generating excel:", e)
             reply_text = f"เกิดข้อผิดพลาดในการสร้างไฟล์ Excel: {e}"
