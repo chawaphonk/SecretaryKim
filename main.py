@@ -28,7 +28,7 @@ app = FastAPI(
     redoc_url="/redoc"
 )
 
-BASE_URL = "https://srv-dankhjrtqb8s73c7n40g.onrender.com"
+BASE_URL = "https://secretarykim.onrender.com"
 
 # Keys
 LINE_CHANNEL_ACCESS_TOKEN = "EOJmyUuFqtRB4XXcmr3n1uClgWVyQEgMDZxhr73mvds0s5M/gaRKjHeY73nO2dq8ZsC7po/RTXfutG8B1R21ziC+ZHndfItC999MTmSqzWo1qBMf5rRll6nYFr6MCUddwDTQCBhvhEfeAA/nvo4T+gdB04t89/1O/w1cDnyilFU="
