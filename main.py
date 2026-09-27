@@ -1,3 +1,38 @@
+import os
+import re
+import pandas as pd
+from datetime import datetime
+from fastapi import FastAPI, Request, HTTPException
+from fastapi.staticfiles import StaticFiles
+from linebot.v3 import WebhookHandler
+from linebot.v3.exceptions import InvalidSignatureError
+from linebot.v3.messaging import (
+    Configuration,
+    ApiClient,
+    MessagingApi,
+    ReplyMessageRequest,
+    TextMessage,
+    QuickReply,
+    QuickReplyItem,
+    MessageAction,
+    FlexMessage,
+    FlexContainer
+)
+from linebot.v3.webhooks import MessageEvent, TextMessageContent
+from supabase import create_client, Client
+
+app = FastAPI()
+
+# สร้างและแมพโฟลเดอร์สำหรับเก็บไฟล์ Excel ชั่วคราว
+os.makedirs("downloads", exist_ok=True)
+app.mount("/downloads", StaticFiles(directory="downloads"), name="downloads")
+
+# Keys
+LINE_CHANNEL_ACCESS_TOKEN = "EOJmyUuFqtRB4XXcmr3n1uClgWVyQEgMDZxhr73mvds0s5M/gaRKjHeY73nO2dq8ZsC7po/RTXfutG8B1R21ziC+ZHndfItC999MTmSqzWo1qBMf5rRll6nYFr6MCUddwDTQCBhvhEfeAA/nvo4T+gdB04t89/1O/w1cDnyilFU="
+LINE_CHANNEL_SECRET = "8bb577ddf6791e5981675e12a41be05c"
+SUPABASE_URL = "https://hprdhjjqskkvmzfdxiyw.supabase.co"
+SUPABASE_KEY = "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6ImhwcmRoampxc2trdm16ZmR4aXl3Iiwicm9sZSI6ImFub24iLCJpYXQiOjE3ODk2OTc5OTQsImV4cCI6MjEwNTI3Mzk5NH0.eQ4c1-WsunjwIl9DslPher5YJlIMe2dt791Dhcc5_0M"
+
 configuration = Configuration(access_token=LINE_CHANNEL_ACCESS_TOKEN)
 handler = WebhookHandler(LINE_CHANNEL_SECRET)
 supabase: Client = create_client(SUPABASE_URL, SUPABASE_KEY)
