@@ -1,9 +1,10 @@
 import os
 import re
+import io
 import pandas as pd
 from datetime import datetime
 from fastapi import FastAPI, Request, HTTPException
-from fastapi.responses import FileResponse
+from fastapi.responses import StreamingResponse
 from linebot.v3 import WebhookHandler
 from linebot.v3.exceptions import InvalidSignatureError
 from linebot.v3.messaging import (
@@ -27,10 +28,6 @@ app = FastAPI(
     redoc_url="/redoc"
 )
 
-# ใช้โฟลเดอร์ /tmp สำหรับบันทึกไฟล์ชั่วคราวบน Linux (Render)
-DOWNLOAD_DIR = "/tmp/downloads"
-os.makedirs(DOWNLOAD_DIR, exist_ok=True)
-
 BASE_URL = "https://srv-dankhjrtqb8s73c7n40g.onrender.com"
 
 # Keys
@@ -52,17 +49,51 @@ async def root():
     return {"status": "ok", "message": "SecretaryKim Web Service is running!"}
 
 
-# Route สำหรับโหลดไฟล์โดยตรงผ่าน FileResponse
-@app.get("/download-excel/{filename}")
-async def download_excel(filename: str):
-    filepath = os.path.join(DOWNLOAD_DIR, filename)
-    if os.path.exists(filepath):
-        return FileResponse(
-            path=filepath,
-            filename=filename,
-            media_type="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
+# Route สำหรับดาวน์โหลด Excel ที่ดึงสดจาก Supabase ทันทีที่กดลิงก์ (ไม่พึ่งดิสก์เซิร์ฟเวอร์)
+@app.get("/export-excel/{user_id}")
+async def export_excel(user_id: str):
+    try:
+        response = supabase.table("transactions").select("*").eq("line_user_id", user_id).order("created_at", desc=False).execute()
+        records = response.data
+
+        if not records:
+            raise HTTPException(status_code=404, detail="No data found for this user")
+
+        data_list = []
+        for idx, r in enumerate(records, 1):
+            created_dt = r.get("created_at", "")
+            if created_dt:
+                dt_obj = datetime.fromisoformat(created_dt.replace("Z", "+00:00"))
+                date_str = dt_obj.strftime("%d/%m/%Y %H:%M")
+            else:
+                date_str = "-"
+
+            data_list.append({
+                "ลำดับ": idx,
+                "วัน-เวลา": date_str,
+                "รายการ": r.get("item", ""),
+                "ประเภท": "รายรับ" if r.get("type") == "income" else "รายจ่าย",
+                "จำนวนเงิน (บาท)": r.get("amount", 0.0),
+                "หมวดหมู่": r.get("category", "ไม่ระบุ")
+            })
+
+        df = pd.DataFrame(data_list)
+
+        # เขียนไฟล์เข้า RAM (BytesIO)
+        output = io.BytesIO()
+        with pd.ExcelWriter(output, engine='openpyxl') as writer:
+            df.to_excel(writer, index=False, sheet_name='รายการรับจ่าย')
+        output.seek(0)
+
+        filename = f"report_{datetime.now().strftime('%Y%m%d_%H%M%S')}.xlsx"
+
+        return StreamingResponse(
+            output,
+            media_type="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+            headers={"Content-Disposition": f"attachment; filename={filename}"}
         )
-    raise HTTPException(status_code=404, detail="File Not Found")
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=str(e))
 
 
 @app.post("/webhook")
@@ -118,37 +149,11 @@ def handle_message(event):
 
     elif user_text in ["ดึงไฟล์", "ขอไฟล์", "excel", "ส่งไฟล์"]:
         try:
-            response = supabase.table("transactions").select("*").eq("line_user_id", user_id).order("created_at", desc=False).execute()
-            records = response.data
-
-            if not records:
+            response = supabase.table("transactions").select("*").eq("line_user_id", user_id).limit(1).execute()
+            if not response.data:
                 reply_text = "ยังไม่มีข้อมูลรายรับ-รายจ่ายสำหรับส่งออกเป็นไฟล์ Excel ครับ"
             else:
-                data_list = []
-                for idx, r in enumerate(records, 1):
-                    created_dt = r.get("created_at", "")
-                    if created_dt:
-                        dt_obj = datetime.fromisoformat(created_dt.replace("Z", "+00:00"))
-                        date_str = dt_obj.strftime("%d/%m/%Y %H:%M")
-                    else:
-                        date_str = "-"
-
-                    data_list.append({
-                        "ลำดับ": idx,
-                        "วัน-เวลา": date_str,
-                        "รายการ": r.get("item", ""),
-                        "ประเภท": "รายรับ" if r.get("type") == "income" else "รายจ่าย",
-                        "จำนวนเงิน (บาท)": r.get("amount", 0.0),
-                        "หมวดหมู่": r.get("category", "ไม่ระบุ")
-                    })
-
-                df = pd.DataFrame(data_list)
-
-                filename = f"report_{user_id}.xlsx"
-                filepath = os.path.join(DOWNLOAD_DIR, filename)
-                df.to_excel(filepath, index=False, engine='openpyxl')
-
-                download_url = f"{BASE_URL}/download-excel/{filename}"
+                download_url = f"{BASE_URL}/export-excel/{user_id}"
 
                 flex_json = {
                     "type": "bubble",
@@ -179,8 +184,8 @@ def handle_message(event):
                 }
                 reply_message_obj = FlexMessage(alt_text="ดาวน์โหลดไฟล์ Excel", contents=FlexContainer.from_dict(flex_json))
         except Exception as e:
-            print("Error generating excel:", e)
-            reply_text = f"เกิดข้อผิดพลาดในการสร้างไฟล์ Excel: {e}"
+            print("Error checking data:", e)
+            reply_text = f"เกิดข้อผิดพลาด: {e}"
 
     elif user_text.startswith("เพิ่มหมวดหมู่"):
         new_cat = user_text.replace("เพิ่มหมวดหมู่", "").strip()
