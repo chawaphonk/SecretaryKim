@@ -23,11 +23,12 @@ from supabase import create_client, Client
 
 app = FastAPI()
 
-# เพิ่มการตั้งค่าโฟลเดอร์สำหรับดาวน์โหลดตรงนี้
-os.makedirs("downloads", exist_ok=True)
-app.mount("/downloads", StaticFiles(directory="downloads"), name="downloads")
+# สร้างโฟลเดอร์ absolute path ป้องกันโฟลเดอร์หลงทิศ
+DOWNLOAD_DIR = os.path.join(os.path.dirname(__file__), "downloads")
+os.makedirs(DOWNLOAD_DIR, exist_ok=True)
 
-# กำหนด BASE_URL ตรงๆ
+app.mount("/downloads", StaticFiles(directory=DOWNLOAD_DIR), name="downloads")
+
 BASE_URL = "https://srv-dankhjrtqb8s73c7n40g.onrender.com"
 
 # Keys
@@ -98,8 +99,8 @@ def handle_message(event):
                 f"{cat_summary_text}"
             )
 
-    # 2. เพิ่มใหม่: คำสั่งส่งไฟล์ Excel (พิมพ์ "ดึงไฟล์", "ขอไฟล์", "excel")
-    elif user_text in ["ดึงไฟล์", "ขอไฟล์", "excel", "ส่งไฟล์"]:
+        # 2. คำสั่งส่งไฟล์ Excel
+        elif user_text in ["ดึงไฟล์", "ขอไฟล์", "excel", "ส่งไฟล์"]:
         try:
             response = supabase.table("transactions").select("*").eq("line_user_id", user_id).order("created_at",
                                                                                                     desc=False).execute()
@@ -108,7 +109,6 @@ def handle_message(event):
             if not records:
                 reply_text = "ยังไม่มีข้อมูลรายรับ-รายจ่ายสำหรับส่งออกเป็นไฟล์ Excel ครับ"
             else:
-                # แปลงข้อมูลเป็น DataFrame
                 data_list = []
                 for idx, r in enumerate(records, 1):
                     created_dt = r.get("created_at", "")
@@ -129,15 +129,14 @@ def handle_message(event):
 
                 df = pd.DataFrame(data_list)
 
-                # บันทึกเป็นไฟล์ .xlsx
+                # สร้างชื่อไฟล์ และเซฟลง DOWNLOAD_DIR
                 filename = f"report_{user_id}_{int(datetime.now().timestamp())}.xlsx"
-                filepath = os.path.join("downloads", filename)
+                filepath = os.path.join(DOWNLOAD_DIR, filename)
                 df.to_excel(filepath, index=False, engine='openpyxl')
 
-                # ลิงก์ดาวน์โหลด (แก้ไข URL ให้ถูกต้องเรียบร้อยแล้ว)
-                download_url = f"https://srv-dankhjrtqb8s73c7n40g.onrender.com/downloads/{filename}"
+                # ลิงก์ดาวน์โหลด
+                download_url = f"{BASE_URL}/downloads/{filename}"
 
-                # สร้างปุ่ม Flex Message ให้คุณแม่กดดาวน์โหลด
                 flex_json = {
                     "type": "bubble",
                     "body": {
