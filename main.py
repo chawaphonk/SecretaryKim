@@ -52,7 +52,7 @@ def handle_message(event):
     user_id = event.source.user_id
     quick_reply_obj = None
 
-    # 1. คำสั่ง 'สรุป' เพื่อดูรายงานภาพรวม
+    # 1. คำสั่ง 'สรุป' เพื่อดูรายงานภาพรวม และแยกตามหมวดหมู่
     if user_text == "สรุป":
         response = supabase.table("transactions").select("*").eq("line_user_id", user_id).execute()
         records = response.data
@@ -64,12 +64,27 @@ def handle_message(event):
             total_expense = sum(r['amount'] for r in records if r.get('type') == 'expense')
             balance = total_income - total_expense
 
+            # จัดกลุ่มคำนวณยอดรวมแยกตามหมวดหมู่ (เฉพาะรายจ่าย)
+            category_totals = {}
+            for r in records:
+                if r.get('type') == 'expense':
+                    cat = r.get('category') or "ไม่ระบุหมวดหมู่"
+                    category_totals[cat] = category_totals.get(cat, 0.0) + r['amount']
+
+            # สร้างข้อความสรุปแยกหมวดหมู่
+            cat_summary_text = ""
+            if category_totals:
+                cat_summary_text = "\n\n📁 **ยอดรายจ่ายแยกตามหมวดหมู่:**\n"
+                for cat, amt in category_totals.items():
+                    cat_summary_text += f"• {cat}: {amt:,.2f} บาท\n"
+
             reply_text = (
                 f"📊 **สรุปยอดรวมทั้งหมด**\n\n"
                 f"📈 รายรับรวม: {total_income:,.2f} บาท\n"
                 f"📉 รายจ่ายรวม: {total_expense:,.2f} บาท\n"
                 f"➖➖➖➖➖➖➖➖➖\n"
                 f"💰 ยอดคงเหลือ: {balance:,.2f} บาท"
+                f"{cat_summary_text}"
             )
 
     # 2. คำสั่งเพิ่มหมวดหมู่ใหม่ (เช่น: เพิ่มหมวดหมู่ เสริมสวย)
