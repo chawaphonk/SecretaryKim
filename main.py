@@ -115,6 +115,7 @@ def handle_message(event):
     reply_message_obj = None
     reply_text = ""
 
+    # --- 1. คำสั่งสรุปยอด ---
     if user_text == "สรุป":
         response = supabase.table("transactions").select("*").eq("line_user_id", user_id).execute()
         records = response.data
@@ -147,6 +148,7 @@ def handle_message(event):
                 f"{cat_summary_text}"
             )
 
+    # --- 2. คำสั่งดึงไฟล์ Excel ---
     elif user_text in ["ดึงไฟล์", "ขอไฟล์", "excel", "ส่งไฟล์"]:
         try:
             response = supabase.table("transactions").select("*").eq("line_user_id", user_id).limit(1).execute()
@@ -161,8 +163,10 @@ def handle_message(event):
                         "type": "box",
                         "layout": "vertical",
                         "contents": [
-                            {"type": "text", "text": "📊 รายงานไฟล์ Excel", "weight": "bold", "size": "lg", "color": "#1DB446"},
-                            {"type": "text", "text": "รวบรวมข้อมูลรายรับ-รายจ่ายทั้งหมดเรียบร้อยครับ", "size": "sm", "color": "#666666", "wrap": True, "margin": "md"}
+                            {"type": "text", "text": "📊 รายงานไฟล์ Excel", "weight": "bold", "size": "lg",
+                             "color": "#1DB446"},
+                            {"type": "text", "text": "รวบรวมข้อมูลรายรับ-รายจ่ายทั้งหมดเรียบร้อยครับ", "size": "sm",
+                             "color": "#666666", "wrap": True, "margin": "md"}
                         ]
                     },
                     "footer": {
@@ -182,11 +186,13 @@ def handle_message(event):
                         ]
                     }
                 }
-                reply_message_obj = FlexMessage(alt_text="ดาวน์โหลดไฟล์ Excel", contents=FlexContainer.from_dict(flex_json))
+                reply_message_obj = FlexMessage(alt_text="ดาวน์โหลดไฟล์ Excel",
+                                                contents=FlexContainer.from_dict(flex_json))
         except Exception as e:
             print("Error checking data:", e)
             reply_text = f"เกิดข้อผิดพลาด: {e}"
 
+    # --- 3. คำสั่งเพิ่มหมวดหมู่ใหม่ ---
     elif user_text.startswith("เพิ่มหมวดหมู่"):
         new_cat = user_text.replace("เพิ่มหมวดหมู่", "").strip()
         if not new_cat:
@@ -198,6 +204,7 @@ def handle_message(event):
             }).execute()
             reply_text = f"เพิ่มหมวดหมู่ '{new_cat}' เรียบร้อยแล้วครับ! ✨"
 
+    # --- 4. คำสั่งลบรายการล่าสุด ---
     elif user_text in ["ลบรายการล่าสุด", "ลบ", "ยกเลิก"]:
         res = supabase.table("transactions") \
             .select("*") \
@@ -229,7 +236,35 @@ def handle_message(event):
         else:
             reply_text = "ยังไม่มีรายการบันทึกให้ลบครับ"
 
-    elif user_id in pending_transactions:
+    # --- 5. ขั้นตอนที่ 2: เมื่อกดเลือกประเภท (รายรับ / รายจ่าย) ---
+    elif user_id in pending_transactions and pending_transactions[user_id].get("step") == "select_type":
+        selected_type = "income" if "รายรับ" in user_text else "expense"
+
+        # อัปเดตข้อมูลประเภทที่เลือก และเปลี่ยน step เป็นรอเลือกหมวดหมู่
+        pending_transactions[user_id]["type"] = selected_type
+        pending_transactions[user_id]["step"] = "select_category"
+
+        item_name = pending_transactions[user_id]["item"]
+        amount = pending_transactions[user_id]["amount"]
+
+        # ดึงรายชื่อหมวดหมู่เตรียมส่งเป็น Quick Reply
+        cats_res = supabase.table("categories").select("name").eq("line_user_id", user_id).execute()
+        custom_cats = [r["name"] for r in cats_res.data]
+        all_categories = list(set(DEFAULT_CATEGORIES + custom_cats))
+
+        items = [
+            QuickReplyItem(
+                action=MessageAction(label=f"📁 {cat[:15]}", text=f"📁 {cat}")
+            )
+            for cat in all_categories[:13]
+        ]
+        quick_reply_obj = QuickReply(items=items)
+
+        type_label = "รายรับ" if selected_type == "income" else "รายจ่าย"
+        reply_text = f"📌 เลือกหมวดหมู่สำหรับ [{type_label}] '{item_name}' ({amount:,.2f} บาท):"
+
+    # --- 6. ขั้นตอนที่ 3: เมื่อกดเลือกหมวดหมู่เสร็จสิ้น -> บันทึกลง Supabase ---
+    elif user_id in pending_transactions and pending_transactions[user_id].get("step") == "select_category":
         selected_cat = user_text.replace("📁 ", "").strip()
 
         data = pending_transactions.pop(user_id)
@@ -237,6 +272,7 @@ def handle_message(event):
         amount = data["amount"]
         trans_type = data["type"]
 
+        # บันทึกข้อมูลเข้า Supabase
         supabase.table("transactions").insert({
             "line_user_id": user_id,
             "item": item_name,
@@ -245,6 +281,7 @@ def handle_message(event):
             "category": selected_cat
         }).execute()
 
+        # คำนวณยอดเงินรวมล่าสุด
         response = supabase.table("transactions").select("*").eq("line_user_id", user_id).execute()
         records = response.data
         total_income = sum(r['amount'] for r in records if r.get('type') == 'income')
@@ -260,41 +297,37 @@ def handle_message(event):
             f"💰 ยอดคงเหลือล่าสุด: {balance:,.2f} บาท"
         )
 
+    # --- 7. ขั้นตอนที่ 1: พิมพ์ชื่อรายการ + จำนวนเงินเข้ามาใหม่ ---
     else:
         match = re.match(r"^(.+)\s+(\d+(\.\d+)?)$", user_text)
         if match:
             item_name = match.group(1).strip()
             amount = float(match.group(2))
-            trans_type = "income" if any(kw in item_name for kw in ["เงินเดือน", "ขาย", "ได้", "รายได้", "ปันผล", "ดอกเบี้ย", "กำไร", "ถูก"]) else "expense"
 
+            # พักข้อมูลลง RAM และตั้ง step เป็น "select_type"
             pending_transactions[user_id] = {
                 "item": item_name,
                 "amount": amount,
-                "type": trans_type
+                "step": "select_type"
             }
 
-            cats_res = supabase.table("categories").select("name").eq("line_user_id", user_id).execute()
-            custom_cats = [r["name"] for r in cats_res.data]
-            all_categories = list(set(DEFAULT_CATEGORIES + custom_cats))
-
+            # สร้างปุ่ม Quick Reply ให้เลือกว่าเป็น รายรับ หรือ รายจ่าย
             items = [
-                QuickReplyItem(
-                    action=MessageAction(label=f"📁 {cat[:15]}", text=cat)
-                )
-                for cat in all_categories[:13]
+                QuickReplyItem(action=MessageAction(label="📈 รายรับ", text="📈 รายรับ")),
+                QuickReplyItem(action=MessageAction(label="📉 รายจ่าย", text="📉 รายจ่าย"))
             ]
             quick_reply_obj = QuickReply(items=items)
 
-            type_label = "รายรับ" if trans_type == "income" else "รายจ่าย"
-            reply_text = f"📌 เลือกหมวดหมู่สำหรับ [{type_label}] '{item_name}' ({amount:,.2f} บาท):"
+            reply_text = f"เลือกประเภทรายการสำหรับ '{item_name}' ({amount:,.2f} บาท):"
         else:
             reply_text = (
                 "โปรดพิมพ์ในรูปแบบ: [รายการ] [จำนวนเงิน]\n"
-                "เช่น: ค่าอาหาร 120\n\n"
+                "เช่น: ดอกเบี้ย 500\n\n"
                 "พิมพ์ 'ดึงไฟล์' หรือ 'ขอไฟล์' เพื่อรับไฟล์ Excel 📊\n"
                 "หรือพิมพ์ 'สรุป', 'เพิ่มหมวดหมู่', 'ลบ' ได้ครับ"
             )
 
+    # --- 8. ส่งข้อความตอบกลับ ---
     if not reply_message_obj:
         reply_message_obj = TextMessage(text=reply_text, quick_reply=quick_reply_obj)
 
