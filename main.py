@@ -265,7 +265,7 @@ def handle_message(event):
         if match:
             item_name = match.group(1).strip()
             amount = float(match.group(2))
-            trans_type = "income" if any(kw in item_name for kw in ["เงินเดือน", "ขาย", "ได้"]) else "expense"
+            trans_type = "income" if any(kw in item_name for kw in ["เงินเดือน", "ขาย", "ได้", "รายได้", "ปันผล", "ดอกเบี้ย", "กำไร", "ถูก"]) else "expense"
 
             pending_transactions[user_id] = {
                 "item": item_name,
